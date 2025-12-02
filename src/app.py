@@ -1,48 +1,58 @@
-from ctypes.util import test
-import sys
-from pathlib import Path
-import time
-sys.path.append(str(Path(__file__).resolve().parent.parent))
-from src.utils import extract_markdown_from_image, ask_question, evaluate_answer
-import logging 
-from src.test_data import happy_case, dense_case, structural_case, valid_case  
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+from csv import DictReader
+from fastapi import FastAPI, UploadFile, File, HTTPException
+from typing import List
+from pydantic import BaseModel
+import logging
+from src.gemini_rag_service import GeminiRAGService
+from google import genai
+from google.genai import types
+from src.config import settings
+import os
 
-allowed_imgs = {"v18.png"}
-test_cases = [item for item in valid_case if any(x in item["image"] for x in allowed_imgs)]
+rag_service = GeminiRAGService()
+app = FastAPI()
+client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
-#test_cases = valid_case
-count_true_result = 0
-markdown_cache = {}
-failed_cases = []
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
 
-for case in test_cases:
-    image_path = case["image"]
+@app.post("/rag/upload-files")
+async def upload_file(
+    file: UploadFile = File(...),
+    store_name: str = "store"
+):
+    file_path = f"./data/{file.filename}"
+
     try:
-        if image_path in markdown_cache:
-            markdown = markdown_cache[image_path]
-        else:
-            markdown = extract_markdown_from_image(case["image"])
-            markdown_cache[image_path] = markdown
-            time.sleep(7.2)  # To avoid rate limiting
-        
-        answer = ask_question(markdown, case["ques"])
-        correct = evaluate_answer(answer, case["ans"])
-        if correct:
-            count_true_result +=1
-        else:
-            failed_cases.append(case["image"])
+        contents = await file.read()
 
-        logging.info(f"{case['image']}")
-        logging.info("Extracted Markdown Table:")
-        logging.info(markdown)
-        logging.info(f"Q: {case['ques']}")
-        logging.info(f"A: {answer}")
-        logging.info(f"Expected: {case['ans']}")
-        logging.info(f"Correct: {correct}\n")
+        os.makedirs("./data", exist_ok=True)
+        with open(file_path, "wb") as f:
+            f.write(contents)
+
+        store_id = rag_service.upload_file(
+            file_path=file_path, 
+            file_name=file.filename or "unknown_filename")
+
+        os.remove(file_path)
+
+        return {
+            "status": "success",
+            "file_name": file.filename,
+            "store_id": store_id
+        }
+
     except Exception as e:
-        logging.error(f"Error while processing {case['image']}: {e}\n")
+        logging.error(f"Error uploading file: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-logging.info(f"Total correct answers: {count_true_result} out of {len(test_cases)}")
-for failed_case in failed_cases:
-    logging.info(f"Failed_case: {failed_case}")
+    
+class ChatRequest(BaseModel):
+    query: str
+    store_id: str
+
+@app.post("/rag/chat")
+async def chat_with_store(request: ChatRequest):
+    response = rag_service.response_document(request.query, request.store_id)
+    return response
