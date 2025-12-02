@@ -23,11 +23,12 @@ This project is a high-performance **Retrieval-Augmented Generation (RAG)** API 
 Create a .env file in the root directory of the project.
 
 4. **Add your Google Gemini API Key**
-```bash
-GEMINI_API_KEY=your_actual_api_key_here
+   ```bash
+   GEMINI_API_KEY=your_actual_api_key_here
 
 5. **Running the Application**
-```bash 
-uv run uvicorn app:app --reload
+   ```bash 
+   uv run uvicorn src.app:app --reload
+
 
 
